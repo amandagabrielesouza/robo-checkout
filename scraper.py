@@ -14,13 +14,11 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.common.exceptions import TimeoutException, StaleElementReferenceException
-from webdriver_manager.chrome import ChromeDriverManager
 
 # ============================================================
 # 1. CONFIGURAÇÕES DE PLANILHAS E GOOGLE SHEETS
@@ -36,7 +34,7 @@ COLUNA_STORE_ID = "Store ID"
 COLUNA_URL = "URL_PRODUTO"
 COLUNAS_BACKUP = ["URL_BACKUP_1", "URL_BACKUP_2"]
 
-MAX_WORKERS = 2  # Recomendado 2 ou 3 para GitHub Actions gratuito
+MAX_WORKERS = 2  
 LISTA_CEPS = ["05417001", "30112000", "89010000"]
 
 TIMEOUT_PAGINA = 35
@@ -515,13 +513,7 @@ def classificar_frete(texto, data_consulta):
 # 3. INTEGRAÇÃO DOS RESULTADOS (EXATAMENTE AS 11 COLUNAS)
 # ============================================================
 def padronizar_resultados(linha_original, cep, texto_frete):
-    """
-    Roda o classificador e mapeia EXATAMENTE para as colunas A até K.
-    Sem enviar dados a mais, as suas colunas L, M, N... com fórmulas não são alteradas.
-    """
     data_consulta = datetime.now().strftime("%d/%m/%Y")
-    
-    # Obtém o nome comercial e Store ID fiéis à linha original!
     nome_comercial = linha_original.get(COLUNA_NOME, "")
     store_id = linha_original.get(COLUNA_STORE_ID, "")
     
@@ -544,30 +536,9 @@ def padronizar_resultados(linha_original, cep, texto_frete):
 
 
 # ============================================================
-# 4. AUTENTICAÇÃO E SELENIUM CORE ORIGINAL DO USUÁRIO
+# 4. SELENIUM CORE 
 # ============================================================
-def conectar_google_sheets():
-    creds_json = os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
-    if not creds_json:
-        raise ValueError("ERRO: Credenciais do Google Sheets não encontradas nas variáveis de ambiente.")
-    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    creds = Credentials.from_service_account_info(json.loads(creds_json), scopes=scopes)
-    return gspread.authorize(creds)
-
-CHROMEDRIVER_PATH = None
-_CHROMEDRIVER_LOCK = threading.Lock()
-
-def inicializar_chromedriver():
-    global CHROMEDRIVER_PATH
-    with _CHROMEDRIVER_LOCK:
-        if CHROMEDRIVER_PATH is None:
-            print("🔧 Instalando/atualizando chromedriver...")
-            CHROMEDRIVER_PATH = ChromeDriverManager().install()
-    return CHROMEDRIVER_PATH
-
 def configurar_driver(tentativas=3):
-    global CHROMEDRIVER_PATH
-    if CHROMEDRIVER_PATH is None: inicializar_chromedriver()
     ultimo_erro = None
     for tentativa in range(tentativas):
         try:
@@ -601,8 +572,8 @@ def configurar_driver(tentativas=3):
             chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
             chrome_options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
 
-            service = Service(CHROMEDRIVER_PATH)
-            driver = webdriver.Chrome(service=service, options=chrome_options)
+            # Usando Selenium Manager nativo (Sem webdriver-manager!)
+            driver = webdriver.Chrome(options=chrome_options)
             driver.set_page_load_timeout(TIMEOUT_PAGINA)
 
             try:
@@ -963,78 +934,6 @@ def localizar_campo_cep(driver):
         except Exception: continue
     return None
 
-INDICADORES_ENVIO = ["dia", "uteis", "util", "correios", "sedex", "pac", "transportadora", "retirada", "loja", "expressa", "economica", "envio", "frete", "fixo", "entrega", "jadlog", "loggi", "azul cargo", "total express", "mercado envios", "mandae", "rapido", "motoboy", "agendado", "normal", "standard", "premium", "econômico", "chega", "segunda", "terca", "quarta", "quinta", "sexta", "sabado", "domingo", "amanha", "amanhã", "hoje", "ate", "até", "shipping", "delivery", "arrives", "days", "express", "standard", "free", "ground", "priority"]
-INDICADORES_PRECO_PRODUTO = ["compre agora", "ganhe", "% off", "unidade", "unidades", "mais vantajoso", "a vista", "no pix", "ou em", "x de", "parcel", "desconto"]
-INDICADORES_POLITICA = ["acima de r$", "acima de r $", "a partir de r$", "a partir de r $", "nas compras acima", "compras acima", "compras a partir", "sul e sudeste", "demais regioes", "demais regiões", "para todo brasil", "para todo o brasil", "todo o brasil", "por nossa conta", "por conta da loja", "por conta da casa", "ganhe frete", "ganhe o frete", "minimo de", "mínimo de", "pedido minimo", "pedido mínimo", "valor minimo", "valor mínimo", "promocao", "promoção", "campanha", "no boleto", "no cartao", "no cartão", "para sul", "para sudeste", "para norte", "para nordeste", "para centro-oeste"]
-
-def _eh_politica_comercial(t_norm): return any(ind in t_norm for ind in INDICADORES_POLITICA)
-
-def _tem_prazo_concreto(t_norm):
-    if re.search(r"\b\d{1,2}/\d{1,2}", t_norm): return True
-    if re.search(r"\b\d+\s*dia", t_norm): return True
-    dias_semana = ["segunda", "terca", "quarta", "quinta", "sexta", "sabado", "domingo"]
-    if any(f"chega {d}" in t_norm or f"entrega {d}" in t_norm or f"chega na {d}" in t_norm or f"chega no {d}" in t_norm for d in dias_semana): return True
-    if "amanha" in t_norm or "hoje" in t_norm: return True
-    if re.search(r"\b\d+\s*day", t_norm): return True
-    if "arrives" in t_norm: return True
-    return False
-
-def parece_frete(txt):
-    if not txt: return False
-    t = txt.lower()
-    t_norm = (t.replace("á", "a").replace("ã", "a").replace("â", "a").replace("é", "e").replace("ê", "e").replace("í", "i").replace("ó", "o").replace("ô", "o").replace("õ", "o").replace("ú", "u").replace("ç", "c"))
-    tem_valor = ("r$" in t) or ("gratis" in t_norm) or ("free" in t_norm)
-    tem_envio = any(ind in t_norm for ind in INDICADORES_ENVIO)
-    eh_preco_produto = any(ind in t_norm for ind in INDICADORES_PRECO_PRODUTO)
-    if not tem_valor or not tem_envio or eh_preco_produto: return False
-    if _eh_politica_comercial(t_norm): return False
-    if not _tem_prazo_concreto(t_norm):
-        modalidades_fortes = ["correios", "sedex", "pac", "jadlog", "loggi", "mandae", "azul cargo", "total express", "mercado envios", "motoboy", "transportadora", "retirada", "retirar"]
-        tem_modalidade_forte = any(m in t_norm for m in modalidades_fortes)
-        if not tem_modalidade_forte or len(txt) > 80: return False
-    return True
-
-def expandir_todas_opcoes(driver, max_iteracoes=10):
-    termos = ["ver mais opções de envio", "ver mais opcoes de envio", "ver mais opções", "ver mais opcoes", "ver mais", "ver todas", "mostrar todas", "mais formas de envio", "mostrar mais", "ver outras", "outras opcoes", "outras opções", "expandir", "carregar mais", "ver outros", "see more", "show more", "view more", "more options", "more shipping", "other options", "load more", "expand", "see all", "show all"]
-    seletores_diretos = [".js-shipping-see-more", ".js-show-more-shipping-options", "[class*='shipping-see-more']", "[class*='more-shipping']"]
-    def contar_itens_frete():
-        try:
-            return driver.execute_script("var count = 0; document.querySelectorAll('.js-shipping-list-item, .shipping-option, [class*=\"shipping-item\"]').forEach(function(el) { count++; }); if (count === 0) { document.querySelectorAll('*').forEach(function(el) { var t = (el.textContent || ''); if (t.indexOf('R$') !== -1 && el.children.length === 0) count++; }); } return count;")
-        except Exception: return 0
-    contagem_anterior = contar_itens_frete()
-    for iteracao in range(max_iteracoes):
-        clicou_algo = False
-        for sel in seletores_diretos:
-            try:
-                for el in driver.find_elements(By.CSS_SELECTOR, sel):
-                    try:
-                        if not el.is_displayed(): continue
-                        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el); time.sleep(0.2)
-                        clicar_robusto(driver, el); clicou_algo = True; time.sleep(1.5); break
-                    except StaleElementReferenceException: continue
-                if clicou_algo: break
-            except Exception: continue
-        if not clicou_algo:
-            for termo in termos:
-                try:
-                    xpath = "//*[self::button or self::a or self::span or self::div or self::p][contains(translate(normalize-space(text()), 'ABCDEFGHIJKLMNOPQRSTUVWXYZÁÉÍÓÚÂÊÔÃÕÇ', 'abcdefghijklmnopqrstuvwxyzáéíóúâêôãõç'), '" + termo + "')]"
-                    for el in driver.find_elements(By.XPATH, xpath):
-                        try:
-                            if not el.is_displayed(): continue
-                            txt = (el.text or "").strip()
-                            if len(txt) > 80 or len(txt) < 3: continue
-                            contexto = driver.execute_script("var el = arguments[0]; for (var i = 0; i < 5; i++) { if (!el.parentElement) break; el = el.parentElement; var t = (el.textContent || '').toLowerCase(); if (t.indexOf('frete') !== -1 || t.indexOf('envio') !== -1 || t.indexOf('cep') !== -1 || t.indexOf('correios') !== -1 || t.indexOf('sedex') !== -1 || t.indexOf('chega') !== -1 || t.indexOf('shipping') !== -1 || t.indexOf('delivery') !== -1 || t.indexOf('arrives') !== -1 || t.indexOf('zip') !== -1 || t.indexOf('r$') !== -1) { return true; } } return false;", el)
-                            if not contexto: continue
-                            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el); time.sleep(0.2)
-                            clicar_robusto(driver, el); clicou_algo = True; time.sleep(1.5); break
-                        except StaleElementReferenceException: continue
-                    if clicou_algo: break
-                except Exception: continue
-        if not clicou_algo: break
-        nova_contagem = contar_itens_frete()
-        if nova_contagem <= contagem_anterior and iteracao > 1: break
-        contagem_anterior = nova_contagem
-
 def capturar_estimativa_prazo(driver):
     try:
         return driver.execute_script("""
@@ -1079,6 +978,47 @@ def _deduplicar_fretes(opcoes):
             if item_lower in existente or existente in item_lower: ja_coberto = True; break
         if not ja_coberto: resultado.append(item)
     return resultado
+
+def expandir_todas_opcoes(driver, max_iteracoes=10):
+    termos = ["ver mais opções de envio", "ver mais opcoes de envio", "ver mais opções", "ver mais opcoes", "ver mais", "ver todas", "mostrar todas", "mais formas de envio", "mostrar mais", "ver outras", "outras opcoes", "outras opções", "expandir", "carregar mais", "ver outros", "see more", "show more", "view more", "more options", "more shipping", "other options", "load more", "expand", "see all", "show all"]
+    seletores_diretos = [".js-shipping-see-more", ".js-show-more-shipping-options", "[class*='shipping-see-more']", "[class*='more-shipping']"]
+    def contar_itens_frete():
+        try:
+            return driver.execute_script("var count = 0; document.querySelectorAll('.js-shipping-list-item, .shipping-option, [class*=\"shipping-item\"]').forEach(function(el) { count++; }); if (count === 0) { document.querySelectorAll('*').forEach(function(el) { var t = (el.textContent || ''); if (t.indexOf('R$') !== -1 && el.children.length === 0) count++; }); } return count;")
+        except Exception: return 0
+    contagem_anterior = contar_itens_frete()
+    for iteracao in range(max_iteracoes):
+        clicou_algo = False
+        for sel in seletores_diretos:
+            try:
+                for el in driver.find_elements(By.CSS_SELECTOR, sel):
+                    try:
+                        if not el.is_displayed(): continue
+                        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el); time.sleep(0.2)
+                        clicar_robusto(driver, el); clicou_algo = True; time.sleep(1.5); break
+                    except StaleElementReferenceException: continue
+                if clicou_algo: break
+            except Exception: continue
+        if not clicou_algo:
+            for termo in termos:
+                try:
+                    xpath = "//*[self::button or self::a or self::span or self::div or self::p][contains(translate(normalize-space(text()), 'ABCDEFGHIJKLMNOPQRSTUVWXYZÁÉÍÓÚÂÊÔÃÕÇ', 'abcdefghijklmnopqrstuvwxyzáéíóúâêôãõç'), '" + termo + "')]"
+                    for el in driver.find_elements(By.XPATH, xpath):
+                        try:
+                            if not el.is_displayed(): continue
+                            txt = (el.text or "").strip()
+                            if len(txt) > 80 or len(txt) < 3: continue
+                            contexto = driver.execute_script("var el = arguments[0]; for (var i = 0; i < 5; i++) { if (!el.parentElement) break; el = el.parentElement; var t = (el.textContent || '').toLowerCase(); if (t.indexOf('frete') !== -1 || t.indexOf('envio') !== -1 || t.indexOf('cep') !== -1 || t.indexOf('correios') !== -1 || t.indexOf('sedex') !== -1 || t.indexOf('chega') !== -1 || t.indexOf('shipping') !== -1 || t.indexOf('delivery') !== -1 || t.indexOf('arrives') !== -1 || t.indexOf('zip') !== -1 || t.indexOf('r$') !== -1) { return true; } } return false;", el)
+                            if not contexto: continue
+                            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el); time.sleep(0.2)
+                            clicar_robusto(driver, el); clicou_algo = True; time.sleep(1.5); break
+                        except StaleElementReferenceException: continue
+                    if clicou_algo: break
+                except Exception: continue
+        if not clicou_algo: break
+        nova_contagem = contar_itens_frete()
+        if nova_contagem <= contagem_anterior and iteracao > 1: break
+        contagem_anterior = nova_contagem
 
 def capturar_lista_fretes(driver, ja_expandiu=False):
     if not ja_expandiu: expandir_todas_opcoes(driver)
@@ -1469,8 +1409,6 @@ def main():
             'idx': i, 'total': total_linhas, 'row': row.to_dict(),
             'orig_row_index': i + 2 # Google Sheets index (Header é 1)
         })
-
-    inicializar_chromedriver()
 
     resultados_finais_saida = []
     atualizacoes_status = []

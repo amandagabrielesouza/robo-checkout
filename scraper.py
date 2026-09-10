@@ -513,7 +513,7 @@ def classificar_frete(texto, data_consulta):
 # 3. INTEGRAÇÃO DOS RESULTADOS (EXATAMENTE AS 11 COLUNAS)
 # ============================================================
 def padronizar_resultados(linha_original, cep, texto_frete):
-    data_consulta = datetime.now().strftime("%d/%m/%Y")
+    data_consulta = datetime.now().strftime("%m/%d/%Y")
     nome_comercial = linha_original.get(COLUNA_NOME, "")
     store_id = linha_original.get(COLUNA_STORE_ID, "")
     

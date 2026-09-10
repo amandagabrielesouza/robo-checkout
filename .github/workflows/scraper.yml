@@ -1,8 +1,7 @@
-yaml
 name: Robo Checkout Nuvemshop
 
 on:
-  workflow_dispatch: # Permite rodar manualmente clicando no botão
+  workflow_dispatch: # Permite que você clique num botão "Run workflow" para rodar quando quiser
 
 jobs:
   scraping_distribuido:
@@ -11,10 +10,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        chunk: [1, 2, 3, 4] # Aqui divide em 4 maquinas (pode aumentar se precisar)
+        chunk: [1, 2, 3, 4] # Aqui divide o trabalho em 4 máquinas simultâneas
 
     steps:
-      - name: Baixar codigo
+      - name: Baixar o codigo
         uses: actions/checkout@v4
 
       - name: Configurar o Python
@@ -27,10 +26,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y google-chrome-stable
 
-      - name: Instalar Bibliotecas do Python
+      - name: Instalar Bibliotecas
         run: pip install -r requirements.txt
 
-      - name: Rodar o Robo (Parte ${{ matrix.chunk }})
+      - name: Rodar o Robo (Lote ${{ matrix.chunk }})
         env:
+          # Isso injeta a sua credencial do Google Sheets com segurança no Python
           GOOGLE_SHEETS_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
-        run: python scraper.py --chunk ${{ matrix.chunk }} --total-chunks 4
+        run: |
+          python scraper.py --chunk ${{ matrix.chunk }} --total-chunks 4

@@ -536,8 +536,16 @@ def padronizar_resultados(linha_original, cep, texto_frete):
 
 
 # ============================================================
-# 4. SELENIUM CORE 
+# 4. SELENIUM CORE E AUTENTICAÇÃO
 # ============================================================
+def conectar_google_sheets():
+    creds_json = os.environ.get("GOOGLE_SHEETS_CREDENTIALS")
+    if not creds_json:
+        raise ValueError("ERRO: Credenciais do Google Sheets não encontradas nas variáveis de ambiente.")
+    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    creds = Credentials.from_service_account_info(json.loads(creds_json), scopes=scopes)
+    return gspread.authorize(creds)
+
 def configurar_driver(tentativas=3):
     ultimo_erro = None
     for tentativa in range(tentativas):

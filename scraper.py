@@ -1437,14 +1437,29 @@ def main():
                 resultados_finais_saida.extend(resultado['dados_formatados'])
 
     print("\n💾 Salvando resultados nas Planilhas...")
-    if atualizacoes_status:
-        planilha_entrada.batch_update(atualizacoes_status)
-        print(f"   ✓ Coluna de Status (F) atualizada na Entrada.")
-
-    if resultados_finais_saida:
-        planilha_saida.append_rows(resultados_finais_saida, value_input_option='USER_ENTERED')
-        print(f"   ✓ {len(resultados_finais_saida)} linhas adicionadas na aba Resultados (Sem substituir fórmulas)!")
     
+    # 1. SALVAR OS DADOS DE SAÍDA PRIMEIRO (COM SISTEMA DE INSISTÊNCIA)
+    if resultados_finais_saida:
+        for tentativa in range(5): # Tenta até 5 vezes se o Google der erro
+            try:
+                planilha_saida.append_rows(resultados_finais_saida, value_input_option='USER_ENTERED')
+                print(f"   ✓ {len(resultados_finais_saida)} linhas adicionadas na aba Resultados!")
+                break # Se deu certo, sai do loop de tentativas
+            except Exception as e:
+                print(f"   ⚠️ Google falhou ao salvar resultados (Tentativa {tentativa+1}/5). Erro: {e}")
+                time.sleep(10) # Espera 10 segundos para o Google se recuperar e tenta de novo
+    
+    # 2. ATUALIZAR OS STATUS NA ENTRADA (TAMBÉM COM INSISTÊNCIA)
+    if atualizacoes_status:
+        for tentativa in range(5):
+            try:
+                planilha_entrada.batch_update(atualizacoes_status)
+                print(f"   ✓ Coluna de Status (F) atualizada na Entrada.")
+                break
+            except Exception as e:
+                print(f"   ⚠️ Google falhou ao atualizar status (Tentativa {tentativa+1}/5). Erro: {e}")
+                time.sleep(10)
+
     print("\n✅ Máquina concluída com sucesso!")
 
 if __name__ == "__main__":
